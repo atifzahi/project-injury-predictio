@@ -1,3 +1,7 @@
+# Injury Prediction in Competitive Runners - Enhanced Research Code
+# Models: XGBoost, LightGBM, Extra Trees, Gradient Boosting, Logistic Regression
+# No use of SMOTE or oversampling. Threshold tuning + Cross-validation for robust evaluation
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -6,7 +10,7 @@ from sklearn.model_selection import train_test_split, StratifiedKFold, GridSearc
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score, roc_auc_score,
-    confusion_matrix, classification_report, RocCurveDisplay, PrecisionRecallDisplay
+    confusion_matrix, classification_report, RocCurveDisplay
 )
 from sklearn.calibration import calibration_curve
 from xgboost import XGBClassifier
@@ -23,6 +27,38 @@ print("Please upload your dataset CSV file")
 uploaded = files.upload()
 df = pd.read_csv(io.BytesIO(uploaded[list(uploaded.keys())[0]]))
 df.dropna(inplace=True)
+
+# Convert date to datetime if exists
+if 'Date' in df.columns:
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+
+# Visualize injury distribution
+plt.figure(figsize=(6, 4))
+sns.countplot(data=df, x='injury')
+plt.title("Injury Distribution (Target Variable)")
+plt.show()
+
+# Correlation with injury
+feature_columns = [col for col in df.columns if col not in ['Athlete ID', 'Date', 'injury']]
+correlation_matrix = df[feature_columns + ['injury']].corr()
+top_corr = correlation_matrix['injury'].drop('injury').abs().sort_values(ascending=False).head(10)
+
+plt.figure(figsize=(8, 6))
+sns.barplot(x=top_corr.values, y=top_corr.index)
+plt.title("Top 10 Features Most Correlated with Injury")
+plt.xlabel("Absolute Correlation")
+plt.tight_layout()
+plt.show()
+
+# Injuries over time
+if 'Date' in df.columns:
+    injury_over_time = df.groupby('Date')['injury'].sum()
+    plt.figure(figsize=(12, 4))
+    injury_over_time.plot(title="Injuries Over Time")
+    plt.ylabel("Number of Injuries")
+    plt.xlabel("Date")
+    plt.tight_layout()
+    plt.show()
 
 # Define features and target
 X = df.drop(columns=['Athlete ID', 'Date', 'injury'])
@@ -95,10 +131,6 @@ for name, model in models.items():
     plt.title(f"{name} - ROC Curve")
     plt.show()
 
-    PrecisionRecallDisplay.from_predictions(y_test, y_proba)
-    plt.title(f"{name} - Precision-Recall Curve")
-    plt.show()
-
     print(f"Best threshold = {best_thresh:.2f}")
     print("Classification Report:\n", classification_report(y_test, y_pred))
 
@@ -131,3 +163,4 @@ sns.barplot(data=result_df, x="F1 Score", y="Model", palette="coolwarm")
 plt.title("Model Comparison - F1 Score")
 plt.tight_layout()
 plt.show()
+
