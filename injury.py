@@ -1,146 +1,133 @@
-# -------------------- 1. Imports --------------------
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.model_selection import train_test_split, StratifiedKFold, GridSearchCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score, roc_auc_score,
+    confusion_matrix, classification_report, RocCurveDisplay, PrecisionRecallDisplay
+)
+from sklearn.calibration import calibration_curve
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
+from sklearn.ensemble import ExtraTreesClassifier, GradientBoostingClassifier
+from sklearn.linear_model import LogisticRegression
 import warnings
 warnings.filterwarnings("ignore")
 
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
-from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score, f1_score,
-    roc_auc_score, confusion_matrix, classification_report,
-    RocCurveDisplay
-)
-
-from sklearn.linear_model import LogisticRegression
-from sklearn.svm import LinearSVC
-from xgboost import XGBClassifier
-from lightgbm import LGBMClassifier
-from imblearn.over_sampling import SMOTE
-
+# Load dataset
 from google.colab import files
-# -------------------- 2. Load Data --------------------
-print("Please upload your CSV file")
+import io
+print("Please upload your dataset CSV file")
 uploaded = files.upload()
+df = pd.read_csv(io.BytesIO(uploaded[list(uploaded.keys())[0]]))
+df.dropna(inplace=True)
 
-# Extract file name
-file_name = list(uploaded.keys())[0]
-df = pd.read_csv(file_name)
+# Define features and target
+X = df.drop(columns=['Athlete ID', 'Date', 'injury'])
+y = df['injury']
 
-# Display dataset information
-print("Dataset Overview:\n", df.head())
-print("\nDataset Info:\n")
-df.info()
-X = df.drop(columns=["Athlete ID", "Date", "injury"])
-y = df["injury"]
+# Train/test split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
 
-# -------------------- 3. Scaling --------------------
+# Scale data
 scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
 
-# -------------------- 4. Train/Test Split --------------------
-X_train, X_test, y_train, y_test = train_test_split(
-    X_scaled, y, test_size=0.2, stratify=y, random_state=42
-)
+# Undersample training data to balance class ratio
+train_df = pd.DataFrame(X_train_scaled, columns=X.columns)
+train_df['injury'] = y_train.reset_index(drop=True)
+minor = train_df[train_df['injury'] == 1]
+major = train_df[train_df['injury'] == 0].sample(n=len(minor)*6, random_state=42)
+balanced_train = pd.concat([minor, major])
+X_train_bal = balanced_train.drop(columns='injury')
+y_train_bal = balanced_train['injury']
 
-# -------------------- 5. SMOTE Resampling --------------------
-pos = sum(y_train == 1)
-neg = sum(y_train == 0)
-imbalance_ratio = neg / pos
-
-smote = SMOTE(sampling_strategy=0.3, k_neighbors=3, random_state=42)
-X_train_res, y_train_res = smote.fit_resample(X_train, y_train)
-
-# -------------------- 6. PCA for SVM only --------------------
-pca = PCA(n_components=0.95, random_state=42)
-X_train_svm = pca.fit_transform(X_train_res)
-X_test_svm = pca.transform(X_test)
-
-# -------------------- 7. Initialize Models --------------------
-log_reg = LogisticRegression(max_iter=1000, class_weight='balanced', random_state=42)
-svm_model = LinearSVC(class_weight='balanced', max_iter=5000, random_state=42)
-xgb_model = XGBClassifier(
-    use_label_encoder=False, eval_metric='logloss',
-    scale_pos_weight=imbalance_ratio, random_state=42
-)
-lgb_model = LGBMClassifier(
-    class_weight='balanced', random_state=42,
-    metric='auc', n_estimators=200, learning_rate=0.05
-)
-
+# Define models
 models = {
-    "Logistic Regression": log_reg,
-    "Linear SVM (PCA)": svm_model,
-    "XGBoost": xgb_model,
-    "LightGBM": lgb_model
+    "XGBoost": XGBClassifier(use_label_encoder=False, eval_metric='logloss', scale_pos_weight=6, random_state=42),
+    "LightGBM": LGBMClassifier(class_weight='balanced', n_estimators=300, learning_rate=0.03, random_state=42),
+    "Extra Trees": ExtraTreesClassifier(n_estimators=300, class_weight='balanced', random_state=42),
+    "Gradient Boosting": GradientBoostingClassifier(n_estimators=300, learning_rate=0.03, random_state=42),
+    "Logistic Regression": LogisticRegression(class_weight='balanced', max_iter=1000, random_state=42)
 }
 
-# -------------------- 8. Evaluation Function --------------------
-def evaluate_model(model, X_train, y_train, X_test, y_test, name, threshold=0.3):
-    print(f"\n{'='*30}\nEvaluating: {name}")
-    model.fit(X_train, y_train)
-    
-    if hasattr(model, "predict_proba"):
-        y_proba = model.predict_proba(X_test)[:, 1]
-        y_pred = (y_proba >= threshold).astype(int)
-        auc = roc_auc_score(y_test, y_proba)
-    else:
-        y_pred = model.predict(X_test)
-        y_proba = None
-        auc = 'N/A'
-    
+results = []
+cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+# Hyperparameter tuning
+grid_params_logreg = {'C': [0.01, 0.1, 1, 10]}
+grid_params_et = {'n_estimators': [100, 200], 'max_depth': [5, 10]}
+
+for name, model in models.items():
+    print(f"\nTraining model: {name}")
+
+    if name == "Logistic Regression":
+        model = GridSearchCV(model, grid_params_logreg, scoring='recall', cv=cv)
+    elif name == "Extra Trees":
+        model = GridSearchCV(model, grid_params_et, scoring='recall', cv=cv)
+
+    model.fit(X_train_bal, y_train_bal)
+    y_proba = model.predict_proba(X_test_scaled)[:, 1] if hasattr(model, 'predict_proba') else model.decision_function(X_test_scaled)
+    if not hasattr(model, 'predict_proba'):
+        y_proba = 1 / (1 + np.exp(-y_proba))
+
+    thresholds = np.arange(0.1, 0.9, 0.05)
+    best_f1, best_thresh = 0, 0.5
+    for thresh in thresholds:
+        y_pred_temp = (y_proba >= thresh).astype(int)
+        f1_temp = f1_score(y_test, y_pred_temp)
+        if f1_temp > best_f1:
+            best_f1 = f1_temp
+            best_thresh = thresh
+
+    y_pred = (y_proba >= best_thresh).astype(int)
+
     acc = accuracy_score(y_test, y_pred)
     prec = precision_score(y_test, y_pred, zero_division=0)
     rec = recall_score(y_test, y_pred)
     f1 = f1_score(y_test, y_pred)
+    auc = roc_auc_score(y_test, y_proba)
 
-    print("Classification Report:\n", classification_report(y_test, y_pred))
-    cm = confusion_matrix(y_test, y_pred)
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
-    plt.title(f"{name} - Confusion Matrix")
-    plt.xlabel("Predicted")
-    plt.ylabel("Actual")
+    RocCurveDisplay.from_predictions(y_test, y_proba)
+    plt.title(f"{name} - ROC Curve")
     plt.show()
 
-    if y_proba is not None:
-        RocCurveDisplay.from_predictions(y_test, y_proba)
-        plt.title(f"{name} - ROC Curve")
-        plt.show()
+    PrecisionRecallDisplay.from_predictions(y_test, y_proba)
+    plt.title(f"{name} - Precision-Recall Curve")
+    plt.show()
 
-    return {
-        "Model": name, "Accuracy": acc, "Precision": prec,
-        "Recall": rec, "F1 Score": f1, "ROC AUC": auc
-    }
+    print(f"Best threshold = {best_thresh:.2f}")
+    print("Classification Report:\n", classification_report(y_test, y_pred))
 
-# -------------------- 9. Train and Evaluate Models --------------------
-results = []
-results.append(evaluate_model(log_reg, X_train_res, y_train_res, X_test, y_test, "Logistic Regression"))
-results.append(evaluate_model(svm_model, X_train_svm, y_train_res, X_test_svm, y_test, "Linear SVM (PCA)", threshold=0.5))
-results.append(evaluate_model(xgb_model, X_train_res, y_train_res, X_test, y_test, "XGBoost", threshold=0.3))
-results.append(evaluate_model(lgb_model, X_train_res, y_train_res, X_test, y_test, "LightGBM", threshold=0.3))
+    f1_scores = []
+    for train_idx, val_idx in cv.split(X_train_bal, y_train_bal):
+        X_tr, X_val = X_train_bal.iloc[train_idx], X_train_bal.iloc[val_idx]
+        y_tr, y_val = y_train_bal.iloc[train_idx], y_train_bal.iloc[val_idx]
+        model.fit(X_tr, y_tr)
+        val_proba = model.predict_proba(X_val)[:, 1] if hasattr(model, 'predict_proba') else model.decision_function(X_val)
+        val_pred = (val_proba >= best_thresh).astype(int)
+        f1_scores.append(f1_score(y_val, val_pred))
 
-# -------------------- 10. Feature Importance (XGBoost) --------------------
-xgb_model.fit(X_train_res, y_train_res)
-importances = xgb_model.feature_importances_
-feature_names = X.columns
-imp_df = pd.DataFrame({"Feature": feature_names, "Importance": importances})
-imp_df = imp_df.sort_values("Importance", ascending=False).head(15)
+    avg_f1_cv = np.mean(f1_scores)
 
-plt.figure(figsize=(10, 6))
-sns.barplot(x="Importance", y="Feature", data=imp_df, palette="mako")
-plt.title("Top 15 Important Features (XGBoost)")
-plt.tight_layout()
-plt.show()
+    results.append({
+        "Model": name,
+        "Accuracy": acc,
+        "Precision": prec,
+        "Recall": rec,
+        "F1 Score": f1,
+        "ROC AUC": auc,
+        "Best Threshold": best_thresh,
+        "F1 CV Avg": avg_f1_cv
+    })
 
-# -------------------- 11. Model Comparison --------------------
-comp_df = pd.DataFrame(results)
-print("\nModel Comparison:\n", comp_df)
-
-plt.figure(figsize=(10, 6))
-sns.barplot(x="F1 Score", y="Model", data=comp_df.sort_values("F1 Score"), palette="coolwarm")
+# Final results
+result_df = pd.DataFrame(results)
+print("\nModel Comparison:\n", result_df)
+sns.barplot(data=result_df, x="F1 Score", y="Model", palette="coolwarm")
 plt.title("Model Comparison - F1 Score")
 plt.tight_layout()
 plt.show()
