@@ -1,7 +1,7 @@
 # project-injury-prediction
 Project Overview
 
-This project aims to predict sports injury risks using machine learning models based on athlete biometrics, training intensity, and recovery patterns. The model helps in identifying potential injury risks and provides actionable insights for athletes and coaches.
+This project explores how machine learning models can be used to predict injury risks in athletes based on biometric data, training intensity, and recovery patterns.
 
 Research Question
 
@@ -9,61 +9,101 @@ How can machine learning models predict sports injury risks based on athlete bio
 
 Dataset
 
-Source: Kaggle Injury Prediction Dataset 
+Source: https://www.kaggle.com/datasets/shashwatwork/injury-prediction-for-competitive-runners
 
 Format: CSV
+Size: Tabular time-series data of runners with injury status labels
+
+Features Overview
+total km, km Z3-4, km Z5-T1-1: total and zonal distance covered
+
+nr. session: number of sessions per day
+
+sprinttr, strength tr.: sprint and strength training
+
+ Recovery Indicators
+hours alter, perceived exertion, perceived soreness, perceived fatigue (often repeated per athlete/day)
+
+These are subjective indicators of how tired/recovered the athlete feels
 
 
+Multiple days are represented as rolling/lag features:
+e.g., total km, km Z3-4, sprinttr, etc., repeated as total km.2, total km.3, ..., up to total km.6
 
-Project Structure
+Athlete ID: unique ID for each athlete (masked)
 
+Date: time-series tracking
 
-Installation & Setup (Google Colab)
+injury: target label (1 = injury, 0 = no injury)
+Project Structure & Workflow
+1. Data Preprocessing & Visualization
+Date conversion, missing value handling
 
-Upload the dataset to Google Drive.
+Injury class distribution plot
 
-Mount Google Drive in Colab:
+Top 10 correlated features with injury
 
-from google.colab import drive
-drive.mount('/content/drive')
+Injury counts over time (line plot)
 
-Run the provided script in injury_prediction.ipynb.
+2. Model Training & Evaluation
+Models Used:
 
-Model Workflow
+XGBoost
 
-Load and explore data
+LightGBM
 
-Preprocess and clean the dataset (handle missing values, feature scaling)
+Extra Trees
 
-Split data into training and test sets
+Gradient Boosting
 
-Train a baseline model (Random Forest)
+Logistic Regression
 
-Evaluate model performance
+Key Steps:
 
-Visualize feature importance
+Train/test split (80/20)
 
-Dependencies
+Feature scaling with StandardScaler
 
-Ensure you have the following Python libraries installed:
+Balanced undersampling (no SMOTE used)
 
-pip install pandas numpy scikit-learn matplotlib seaborn
+Hyperparameter tuning using GridSearchCV (for Logistic Regression & Extra Trees)
 
-Model Performance
+Threshold optimization for each model to boost F1-Score
 
-The model is evaluated using accuracy, precision, recall, and F1-score.
+Evaluation via Accuracy, Precision, Recall, F1, ROC AUC
 
-Feature importance analysis helps understand key factors in injury prediction.
+3. Cross-validation
+Stratified 5-fold CV for stability
+
+F1 CV average included in results
+
+4. Visuals
+ROC Curve for each model
+
+Final bar plot comparing F1 Scores
 
 Future Improvements
+Try deep learning models (e.g., RNN/LSTM for time-series)
 
-Experiment with different machine learning algorithms.
+Integrate wearable device real-time monitoring
 
-Implement deep learning models for better accuracy.
-
-Integrate real-time injury risk monitoring.
-
+Develop a visual injury-risk dashboard
 License
+This project is for academic use only. All rights reserved.
 
-This project is for academic and research purposes only.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
